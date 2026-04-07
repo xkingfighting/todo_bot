@@ -125,13 +125,19 @@ class TodoController:
         due_time = ""
         tags = []
 
-        # Extract #tags (but not #high/#medium/#low)
+        # Extract #tags (but not #high/#medium/#low, handle #project:N)
+        project_id = 0
         tag_matches = re.findall(r'#(\S+)', title)
         priority_words = {"high", "medium", "low"}
         for tag in tag_matches:
             low = tag.lower()
             if low in priority_words:
                 priority = {"high": 1, "medium": 2, "low": 3}[low]
+            elif low.startswith("project:"):
+                try:
+                    project_id = int(low.split(":")[1])
+                except (ValueError, IndexError):
+                    pass
             else:
                 tags.append(tag)
             title = title.replace(f"#{tag}", "").strip()
@@ -154,6 +160,7 @@ class TodoController:
             priority=priority, due_date=due_date,
             tags=",".join(tags) if tags else "",
             due_time=due_time or "",
+            project_id=project_id,
         )
 
         ActivityLog.log(update.chat.id, update.chat.type, update.user.id,
@@ -418,24 +425,51 @@ class TodoController:
 
     def _cmd_project(self, update, args, lang):
         parts = args.split(maxsplit=1)
-        if not parts:
-            return self.view.error(t("err_project_usage", lang))
+        # No args: show project dashboard
+        if not parts or not args.strip():
+            projects = ProjectModel.list_by_user(update.user.id)
+            return self.view.project_dashboard(projects, lang)
+
         action = parts[0].lower()
         name = parts[1].strip() if len(parts) > 1 else ""
 
         if action == "create" and name:
             proj = ProjectModel.create(update.user.id, update.chat.id, update.chat.type, name)
-            return self.view.project_created(proj.name, lang)
+            return self.view.project_created_card(proj, lang)
         elif action == "delete" and name:
-            proj = ProjectModel.find_by_name(update.user.id, name)
+            # Support delete by ID or name
+            proj = None
+            try:
+                pid = int(name)
+                proj = ProjectModel.get_by_id(pid, update.user.id)
+            except ValueError:
+                proj = ProjectModel.find_by_name(update.user.id, name)
             if not proj:
                 return self.view.error(t("err_project_not_found", lang))
             ProjectModel.delete(proj.id, update.user.id)
-            return self.view.project_deleted(proj.name, lang)
+            return self.view.project_deleted_card(proj, lang)
+        elif action == "view" and name:
+            # View project detail
+            try:
+                pid = int(name)
+                proj = ProjectModel.get_by_id(pid, update.user.id)
+            except ValueError:
+                proj = ProjectModel.find_by_name(update.user.id, name)
+            if not proj:
+                return self.view.error(t("err_project_not_found", lang))
+            todos = self.model.list_by_user(update.user.id, status=0, project_id=proj.id)
+            return self.view.project_detail(proj, todos, lang)
         elif action == "list" or action == "ls":
             projects = ProjectModel.list_by_user(update.user.id)
-            return self.view.project_list(projects, lang)
-        return self.view.error(t("err_project_usage", lang))
+            return self.view.project_dashboard(projects, lang)
+        else:
+            # Treat as project name to view
+            full_name = args.strip()
+            proj = ProjectModel.find_by_name(update.user.id, full_name)
+            if proj:
+                todos = self.model.list_by_user(update.user.id, status=0, project_id=proj.id)
+                return self.view.project_detail(proj, todos, lang)
+            return self.view.error(t("err_project_usage", lang))
 
     def _cmd_move(self, update, args, lang):
         parts = args.split(maxsplit=1)

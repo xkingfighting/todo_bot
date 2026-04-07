@@ -276,31 +276,91 @@ class TodoView:
         return t("subtask_added", lang, id=sub_id, parent_id=parent_id), 1
 
     @staticmethod
-    def project_created(name: str, lang: str) -> tuple[str, int]:
-        return t("project_created", lang, name=name), 1
-
-    @staticmethod
-    def project_deleted(name: str, lang: str) -> tuple[str, int]:
-        return t("project_deleted", lang, name=name), 1
-
-    @staticmethod
-    def project_list(projects: list, lang: str) -> tuple[str, int]:
+    def project_dashboard(projects: list, lang: str) -> tuple[str, int]:
+        """Main project view: list all projects with actions."""
         if not projects:
-            return t("no_projects", lang), 1
+            card = {
+                "text": t("no_projects", lang),
+                "buttons": [
+                    {"label": t("project_create_btn", lang), "command": "/project create ", "style": "primary"},
+                ]
+            }
+            return _dumps(card), 10
+
         items = []
         for p in projects:
             label = f"{p.emoji} {p.name}".strip() if p.emoji else p.name
+            # Count todos in project
+            count = TodoModel.list_by_user(p.user_id, status=0, project_id=p.id)
             items.append({
                 "title": label,
-                "description": f"ID: {p.id}",
-                "command": f"/list project:{p.id}",
+                "description": f"{len(count)} {t('pending', lang)}",
+                "command": f"/project view {p.id}",
             })
+
         card = {"text": t("project_list_title", lang), "items": items}
+        # Send list card + follow up with action buttons
         return _dumps(card), 11
 
     @staticmethod
+    def project_created_card(project, lang: str) -> tuple[str, int]:
+        """ActionCard after creating a project."""
+        name = f"{project.emoji} {project.name}".strip() if project.emoji else project.name
+        card = {
+            "text": t("project_created", lang, name=name),
+            "buttons": [
+                {"label": t("project_view_btn", lang), "command": f"/project view {project.id}", "style": "primary"},
+                {"label": t("project_list_btn", lang), "command": "/project"},
+            ]
+        }
+        return _dumps(card), 10
+
+    @staticmethod
+    def project_deleted_card(project, lang: str) -> tuple[str, int]:
+        """ActionCard after deleting a project."""
+        card = {
+            "text": t("project_deleted", lang, name=project.name),
+            "buttons": [
+                {"label": t("project_list_btn", lang), "command": "/project"},
+            ]
+        }
+        return _dumps(card), 10
+
+    @staticmethod
+    def project_detail(project, todos: list[Todo], lang: str) -> tuple[str, int]:
+        """DetailCard for a single project with its tasks and actions."""
+        name = f"{project.emoji} {project.name}".strip() if project.emoji else project.name
+        pending = sum(1 for t_ in todos if t_.status == 0)
+
+        fields = [
+            {"label": t("pending", lang), "value": str(pending)},
+            {"label": t("total", lang), "value": str(len(todos))},
+        ]
+
+        buttons = [
+            {"label": f"+ {t('project_add_task', lang)}", "command": f"/add #project:{project.id} ", "style": "primary"},
+            {"label": t("project_view_tasks", lang), "command": f"/list project:{project.id}"},
+            {"label": t("delete", lang), "command": f"/project delete {project.id}"},
+            {"label": t("back", lang), "command": "/project"},
+        ]
+
+        card = {
+            "title": name,
+            "fields": fields,
+            "buttons": buttons,
+        }
+        return _dumps(card), 13
+
+    @staticmethod
     def project_assigned(todo_id: int, name: str, lang: str) -> tuple[str, int]:
-        return t("project_assigned", lang, id=todo_id, name=name), 1
+        card = {
+            "text": t("project_assigned", lang, id=todo_id, name=name),
+            "buttons": [
+                {"label": t("view_list", lang), "command": "/list"},
+                {"label": t("project_list_btn", lang), "command": "/project"},
+            ]
+        }
+        return _dumps(card), 10
 
     @staticmethod
     def star_toggled(todo_id: int, starred: bool, lang: str) -> tuple[str, int]:

@@ -92,6 +92,11 @@ STRINGS = {
         "project_list_title": "Your Projects",
         "no_projects": "No projects yet. Use /project create <name> to create one.",
         "project_assigned": "Todo #{id} moved to project \"{name}\".",
+        "project_create_btn": "Create Project",
+        "project_view_btn": "View Project",
+        "project_list_btn": "All Projects",
+        "project_add_task": "Add Task",
+        "project_view_tasks": "View Tasks",
         # Star
         "starred": "Starred",
         "unstarred": "Unstarred",
@@ -234,6 +239,11 @@ STRINGS = {
         "project_list_title": "你的项目",
         "no_projects": "暂无项目。使用 /project create <名称> 创建。",
         "project_assigned": "待办 #{id} 已移至项目 \"{name}\"。",
+        "project_create_btn": "创建项目",
+        "project_view_btn": "查看项目",
+        "project_list_btn": "全部项目",
+        "project_add_task": "添加任务",
+        "project_view_tasks": "查看任务",
         # Star
         "starred": "已收藏",
         "unstarred": "已取消收藏",
