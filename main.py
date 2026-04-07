@@ -10,7 +10,7 @@ from platforms.talkonly import TalkOnlyPlatform
 from controllers.todo_controller import TodoController
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("todo_bot")

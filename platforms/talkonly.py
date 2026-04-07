@@ -26,9 +26,12 @@ class TalkOnlyPlatform(BotPlatform):
     def _request(self, method: str, data: dict = None) -> dict:
         url = f"{self._base_url}/{method}"
         try:
+            logger.debug("API >> %s payload=%s", method, data)
             resp = requests.post(url, headers=self._headers, json=data or {}, timeout=settings.POLL_TIMEOUT + 10)
             resp.raise_for_status()
-            return resp.json()
+            result = resp.json()
+            logger.debug("API << %s response=%s", method, result)
+            return result
         except requests.RequestException as e:
             logger.error("API request failed: %s %s -> %s", method, data, e)
             return {"ok": False, "error_code": "REQUEST_FAILED", "description": str(e)}

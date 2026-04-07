@@ -1,7 +1,11 @@
 """View layer: format Todo data into platform-agnostic message structures."""
 
 import json
+from functools import partial
 from models.todo import Todo, PRIORITY_LABELS, PRIORITY_ICONS
+
+# Compact JSON without Unicode escapes, matching TalkOnly card format
+_dumps = partial(json.dumps, ensure_ascii=False, separators=(",", ":"))
 
 
 STATUS_ICONS = {0: "[ ]", 1: "[x]"}
@@ -44,7 +48,7 @@ class TodoView:
                 {"label": "Delete", "command": f"/del {todo.id}"},
             ]
         }
-        return json.dumps(card), 10
+        return _dumps(card), 10
 
     @staticmethod
     def todo_list(todos: list[Todo], title: str = "Your Todos") -> tuple[str, int]:
@@ -63,8 +67,8 @@ class TodoView:
                 "command": f"/detail {t.id}",
             })
 
-        card = {"title": title, "items": items}
-        return json.dumps(card), 11
+        card = {"text": title, "items": items}
+        return _dumps(card), 11
 
     @staticmethod
     def todo_detail(todo: Todo) -> tuple[str, int]:
@@ -90,7 +94,7 @@ class TodoView:
             "fields": fields,
             "buttons": buttons,
         }
-        return json.dumps(card), 13
+        return _dumps(card), 13
 
     @staticmethod
     def todo_completed(todo_id: int) -> tuple[str, int]:
@@ -101,7 +105,7 @@ class TodoView:
                 {"label": "View List", "command": "/list"},
             ]
         }
-        return json.dumps(card), 10
+        return _dumps(card), 10
 
     @staticmethod
     def todo_uncompleted(todo_id: int) -> tuple[str, int]:
@@ -112,7 +116,7 @@ class TodoView:
                 {"label": "View List", "command": "/list"},
             ]
         }
-        return json.dumps(card), 10
+        return _dumps(card), 10
 
     @staticmethod
     def todo_deleted(todo_id: int) -> tuple[str, int]:
@@ -145,7 +149,7 @@ class TodoView:
                 {"label": "View All", "command": "/all"},
             ]
         }
-        return json.dumps(card), 13
+        return _dumps(card), 13
 
     @staticmethod
     def error(message: str) -> tuple[str, int]:
