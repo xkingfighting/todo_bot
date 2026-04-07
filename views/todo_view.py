@@ -1,12 +1,12 @@
-"""View layer: format Todo data into platform-agnostic message structures."""
+"""View layer: format Todo data into TalkOnly card messages with i18n."""
 
 import json
+from datetime import datetime, timedelta
 from functools import partial
-from models.todo import Todo, PRIORITY_LABELS, PRIORITY_ICONS
+from models.todo import Todo, PRIORITY_ICONS
+from i18n import t, priority_label, repeat_label
 
-# Compact JSON without Unicode escapes, matching TalkOnly card format
 _dumps = partial(json.dumps, ensure_ascii=False, separators=(",", ":"))
-
 
 STATUS_ICONS = {0: "[ ]", 1: "[x]"}
 
@@ -14,80 +14,102 @@ STATUS_ICONS = {0: "[ ]", 1: "[x]"}
 class TodoView:
 
     @staticmethod
-    def welcome() -> tuple[str, int]:
-        """Return (text, msg_type) for welcome message."""
-        text = (
-            "Welcome to Todo Bot!\n\n"
-            "I help you manage your tasks. Here are the commands:\n\n"
-            "/add <task> - Add a new todo\n"
-            "/list - Show all pending todos\n"
-            "/all - Show all todos\n"
-            "/done <id> - Mark as completed\n"
-            "/undone <id> - Reopen a todo\n"
-            "/del <id> - Delete a todo\n"
-            "/priority <id> <1|2|3> - Set priority\n"
-            "/due <id> <YYYY-MM-DD> - Set due date\n"
-            "/clear - Clear completed todos\n"
-            "/stats - Show statistics\n"
-            "/help - Show this help"
-        )
-        return text, 1
+    def welcome(lang: str) -> tuple[str, int]:
+        return t("welcome", lang), 1
 
     @staticmethod
-    def help_message() -> tuple[str, int]:
-        return TodoView.welcome()
+    def help_message(lang: str) -> tuple[str, int]:
+        return t("welcome", lang), 1
 
     @staticmethod
-    def todo_created(todo: Todo) -> tuple[str, int]:
-        """ActionCard for newly created todo."""
+    def onboarding(lang: str) -> tuple[str, int]:
         card = {
-            "text": f"Todo #{todo.id} created!\n\n{todo.title}",
+            "text": t("onboarding", lang),
             "buttons": [
-                {"label": "Done", "command": f"/done {todo.id}", "style": "primary"},
-                {"label": "Set High Priority", "command": f"/priority {todo.id} 1"},
-                {"label": "Delete", "command": f"/del {todo.id}"},
+                {"label": t("onboarding_btn", lang), "command": t("onboarding_cmd", lang), "style": "primary"},
+                {"label": t("view_list", lang), "command": "/help"},
             ]
         }
         return _dumps(card), 10
 
     @staticmethod
-    def todo_list(todos: list[Todo], title: str = "Your Todos") -> tuple[str, int]:
-        """ListCard for todo list."""
-        if not todos:
-            return "No todos found. Use /add <task> to create one!", 1
+    def todo_created(todo: Todo, lang: str) -> tuple[str, int]:
+        text = t("todo_created", lang, id=todo.id, title=todo.title)
+        if todo.tags:
+            text += f"\n#{todo.tags.replace(',', ' #')}"
+        card = {
+            "text": text,
+            "buttons": [
+                {"label": t("done", lang), "command": f"/done {todo.id}", "style": "primary"},
+                {"label": t("set_high", lang), "command": f"/priority {todo.id} 1"},
+                {"label": t("set_due", lang), "command": f"/setdue {todo.id}"},
+                {"label": t("delete", lang), "command": f"/del {todo.id}"},
+            ]
+        }
+        return _dumps(card), 10
 
+    @staticmethod
+    def todo_list(todos: list[Todo], title: str, lang: str) -> tuple[str, int]:
+        if not todos:
+            return t("no_todos", lang), 1
+
+        today = datetime.now().strftime("%Y-%m-%d")
         items = []
-        for t in todos:
-            status_icon = STATUS_ICONS.get(t.status, "[ ]")
-            priority_icon = PRIORITY_ICONS.get(t.priority, "!")
-            due_str = f" | Due: {t.due_date}" if t.due_date else ""
+        for todo in todos:
+            status_icon = STATUS_ICONS.get(todo.status, "[ ]")
+            p_icon = PRIORITY_ICONS.get(todo.priority, "!")
+            p_label = priority_label(todo.priority, lang)
+            desc = f"{p_icon} {p_label}"
+            if todo.due_date:
+                desc += f" | {todo.due_date}"
+                if todo.status == 0 and str(todo.due_date) < today:
+                    desc += f" {t('overdue', lang)}"
+            if todo.tags:
+                desc += f" | #{todo.tags.replace(',', ' #')}"
+            if todo.assignee_name:
+                desc += f" | @{todo.assignee_name}"
             items.append({
-                "title": f"{status_icon} #{t.id} {t.title}",
-                "description": f"{priority_icon} {PRIORITY_LABELS.get(t.priority, 'Medium')}{due_str}",
-                "command": f"/detail {t.id}",
+                "title": f"{status_icon} #{todo.id} {todo.title}",
+                "description": desc,
+                "command": f"/detail {todo.id}",
             })
 
         card = {"text": title, "items": items}
         return _dumps(card), 11
 
     @staticmethod
-    def todo_detail(todo: Todo) -> tuple[str, int]:
-        """DetailCard for a single todo."""
+    def todo_detail(todo: Todo, lang: str) -> tuple[str, int]:
+        today = datetime.now().strftime("%Y-%m-%d")
+        status_val = t("completed", lang) if todo.status == 1 else t("pending", lang)
+        if todo.status == 0 and todo.due_date and str(todo.due_date) < today:
+            status_val = t("overdue", lang)
+
         fields = [
-            {"label": "Status", "value": "Completed" if todo.status == 1 else "Pending"},
-            {"label": "Priority", "value": PRIORITY_LABELS.get(todo.priority, "Medium")},
+            {"label": t("status", lang), "value": status_val},
+            {"label": t("priority", lang), "value": priority_label(todo.priority, lang)},
         ]
         if todo.due_date:
-            fields.append({"label": "Due Date", "value": str(todo.due_date)})
+            fields.append({"label": t("due_date", lang), "value": str(todo.due_date)})
+        if todo.tags:
+            fields.append({"label": t("tags", lang), "value": f"#{todo.tags.replace(',', ' #')}"})
+        if todo.repeat_rule:
+            fields.append({"label": t("repeat", lang), "value": repeat_label(todo.repeat_rule, lang)})
+        if todo.assignee_name:
+            fields.append({"label": t("assignee", lang), "value": todo.assignee_name})
         if todo.description:
-            fields.append({"label": "Description", "value": todo.description})
+            fields.append({"label": t("description", lang), "value": todo.description})
 
         buttons = []
         if todo.status == 0:
-            buttons.append({"label": "Done", "command": f"/done {todo.id}", "style": "primary"})
+            buttons.append({"label": t("done", lang), "command": f"/done {todo.id}", "style": "primary"})
         else:
-            buttons.append({"label": "Reopen", "command": f"/undone {todo.id}"})
-        buttons.append({"label": "Delete", "command": f"/del {todo.id}"})
+            buttons.append({"label": t("reopen", lang), "command": f"/undone {todo.id}"})
+        for p in (1, 2, 3):
+            if p != todo.priority:
+                buttons.append({"label": f"{t('priority', lang)}: {priority_label(p, lang)}",
+                                "command": f"/priority {todo.id} {p}"})
+        buttons.append({"label": t("set_due", lang), "command": f"/setdue {todo.id}"})
+        buttons.append({"label": t("delete", lang), "command": f"/del {todo.id}"})
 
         card = {
             "title": f"Todo #{todo.id}: {todo.title}",
@@ -97,64 +119,149 @@ class TodoView:
         return _dumps(card), 13
 
     @staticmethod
-    def todo_completed(todo_id: int) -> tuple[str, int]:
+    def todo_completed(todo_id: int, lang: str) -> tuple[str, int]:
         card = {
-            "text": f"Todo #{todo_id} marked as completed!",
+            "text": t("todo_completed", lang, id=todo_id),
             "buttons": [
-                {"label": "Undo", "command": f"/undone {todo_id}"},
-                {"label": "View List", "command": "/list"},
+                {"label": t("undo", lang), "command": f"/undone {todo_id}"},
+                {"label": t("view_list", lang), "command": "/list"},
             ]
         }
         return _dumps(card), 10
 
     @staticmethod
-    def todo_uncompleted(todo_id: int) -> tuple[str, int]:
+    def todo_uncompleted(todo_id: int, lang: str) -> tuple[str, int]:
         card = {
-            "text": f"Todo #{todo_id} reopened!",
+            "text": t("todo_reopened", lang, id=todo_id),
             "buttons": [
-                {"label": "Done", "command": f"/done {todo_id}", "style": "primary"},
-                {"label": "View List", "command": "/list"},
+                {"label": t("done", lang), "command": f"/done {todo_id}", "style": "primary"},
+                {"label": t("view_list", lang), "command": "/list"},
             ]
         }
         return _dumps(card), 10
 
     @staticmethod
-    def todo_deleted(todo_id: int) -> tuple[str, int]:
-        return f"Todo #{todo_id} deleted.", 1
-
-    @staticmethod
-    def priority_updated(todo_id: int, priority: int) -> tuple[str, int]:
-        return f"Todo #{todo_id} priority set to {PRIORITY_LABELS.get(priority, 'Medium')}.", 1
-
-    @staticmethod
-    def due_date_updated(todo_id: int, due_date: str) -> tuple[str, int]:
-        return f"Todo #{todo_id} due date set to {due_date}.", 1
-
-    @staticmethod
-    def cleared(count: int) -> tuple[str, int]:
-        return f"Cleared {count} completed todo(s).", 1
-
-    @staticmethod
-    def stats(counts: dict) -> tuple[str, int]:
-        """DetailCard for statistics."""
+    def set_due_prompt(todo: Todo, lang: str) -> tuple[str, int]:
+        today = datetime.now()
+        d1 = today.strftime("%Y-%m-%d")
+        d3 = (today + timedelta(days=3)).strftime("%Y-%m-%d")
+        d7 = (today + timedelta(days=7)).strftime("%Y-%m-%d")
         card = {
-            "title": "Todo Statistics",
-            "fields": [
-                {"label": "Total", "value": str(counts["total"])},
-                {"label": "Pending", "value": str(counts["pending"])},
-                {"label": "Completed", "value": str(counts["completed"])},
-            ],
+            "text": t("set_due_prompt", lang, id=todo.id, title=todo.title),
             "buttons": [
-                {"label": "View Pending", "command": "/list"},
-                {"label": "View All", "command": "/all"},
+                {"label": t("today", lang), "command": f"/due {todo.id} {d1}", "style": "primary"},
+                {"label": t("in_3_days", lang), "command": f"/due {todo.id} {d3}"},
+                {"label": t("in_7_days", lang), "command": f"/due {todo.id} {d7}"},
+                {"label": t("back", lang), "command": f"/detail {todo.id}"},
+            ]
+        }
+        return _dumps(card), 10
+
+    @staticmethod
+    def todo_deleted(todo_id: int, lang: str) -> tuple[str, int]:
+        return t("todo_deleted", lang, id=todo_id), 1
+
+    @staticmethod
+    def priority_updated(todo_id: int, priority: int, lang: str) -> tuple[str, int]:
+        return t("priority_set", lang, id=todo_id, priority=priority_label(priority, lang)), 1
+
+    @staticmethod
+    def due_date_updated(todo_id: int, due_date: str, lang: str) -> tuple[str, int]:
+        return t("due_set", lang, id=todo_id, date=due_date), 1
+
+    @staticmethod
+    def title_edited(todo_id: int, lang: str) -> tuple[str, int]:
+        return t("title_edited", lang, id=todo_id), 1
+
+    @staticmethod
+    def note_added(todo_id: int, lang: str) -> tuple[str, int]:
+        return t("note_added", lang, id=todo_id), 1
+
+    @staticmethod
+    def repeat_set(todo_id: int, rule: str, lang: str) -> tuple[str, int]:
+        if rule:
+            return t("repeat_set", lang, id=todo_id, rule=repeat_label(rule, lang)), 1
+        return t("repeat_off", lang, id=todo_id), 1
+
+    @staticmethod
+    def assigned(todo_id: int, name: str, lang: str) -> tuple[str, int]:
+        return t("assigned", lang, id=todo_id, name=name), 1
+
+    @staticmethod
+    def cleared(count: int, lang: str) -> tuple[str, int]:
+        return t("cleared", lang, count=count), 1
+
+    @staticmethod
+    def stats(counts: dict, lang: str) -> tuple[str, int]:
+        fields = [
+            {"label": t("total", lang), "value": str(counts["total"])},
+            {"label": t("pending", lang), "value": str(counts["pending"])},
+            {"label": t("completed", lang), "value": str(counts["completed"])},
+            {"label": t("overdue", lang), "value": str(counts["overdue"])},
+        ]
+        card = {
+            "title": t("stats_title", lang),
+            "fields": fields,
+            "buttons": [
+                {"label": t("view_pending", lang), "command": "/list"},
+                {"label": t("view_all", lang), "command": "/all"},
             ]
         }
         return _dumps(card), 13
 
     @staticmethod
-    def error(message: str) -> tuple[str, int]:
-        return f"Error: {message}", 1
+    def search_results(todos: list[Todo], keyword: str, lang: str) -> tuple[str, int]:
+        if not todos:
+            return t("no_results", lang, keyword=keyword), 1
+        return TodoView.todo_list(todos, t("search_title", lang, keyword=keyword), lang)
 
     @staticmethod
-    def not_found(todo_id: int) -> tuple[str, int]:
-        return f"Todo #{todo_id} not found.", 1
+    def export_text(todos: list[Todo], lang: str) -> tuple[str, int]:
+        if not todos:
+            return t("no_todos", lang), 1
+        lines = [t("export_title", lang), "=" * 20, ""]
+        for todo in todos:
+            icon = STATUS_ICONS.get(todo.status, "[ ]")
+            p = priority_label(todo.priority, lang)
+            line = f"{icon} #{todo.id} {todo.title} [{p}]"
+            if todo.due_date:
+                line += f" (Due: {todo.due_date})"
+            if todo.tags:
+                line += f" #{todo.tags.replace(',', ' #')}"
+            lines.append(line)
+        return "\n".join(lines), 1
+
+    @staticmethod
+    def lang_set(lang: str) -> tuple[str, int]:
+        return t("lang_set", lang), 1
+
+    @staticmethod
+    def reminder(todo: Todo, lang: str) -> tuple[str, int]:
+        card = {
+            "text": t("reminder", lang, id=todo.id, title=todo.title),
+            "buttons": [
+                {"label": t("done", lang), "command": f"/done {todo.id}", "style": "primary"},
+                {"label": t("view_list", lang), "command": "/list"},
+            ]
+        }
+        return _dumps(card), 10
+
+    @staticmethod
+    def daily_summary(counts: dict, lang: str) -> tuple[str, int]:
+        card = {
+            "text": t("daily_summary_text", lang, pending=counts["pending"], overdue=counts["overdue"]),
+            "buttons": [
+                {"label": t("view_pending", lang), "command": "/list", "style": "primary"},
+            ]
+        }
+        if counts["overdue"] > 0:
+            card["buttons"].append({"label": t("overdue", lang), "command": "/list overdue"})
+        return _dumps(card), 10
+
+    @staticmethod
+    def error(message: str) -> tuple[str, int]:
+        return message, 1
+
+    @staticmethod
+    def not_found(todo_id: int, lang: str) -> tuple[str, int]:
+        return t("err_not_found", lang, id=todo_id), 1

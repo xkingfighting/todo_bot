@@ -8,9 +8,10 @@ from config.settings import settings
 from models.database import init_database
 from platforms.talkonly import TalkOnlyPlatform
 from controllers.todo_controller import TodoController
+from scheduler import Scheduler
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("todo_bot")
@@ -19,7 +20,6 @@ logger = logging.getLogger("todo_bot")
 def main():
     logger.info("Starting Todo Bot...")
 
-    # Validate config
     if not settings.BOT_TOKEN:
         logger.error("BOT_TOKEN is not set. Check your .env file.")
         sys.exit(1)
@@ -30,7 +30,7 @@ def main():
     # Init platform
     platform = TalkOnlyPlatform()
 
-    # Switch to polling mode (delete any existing webhook)
+    # Switch to polling mode
     result = platform.delete_webhook(drop_pending=False)
     logger.info("deleteWebhook: %s", result)
 
@@ -45,9 +45,14 @@ def main():
     # Init controller
     controller = TodoController(platform)
 
+    # Start background scheduler (reminders + daily summary)
+    sched = Scheduler(platform)
+    sched.start()
+
     # Graceful shutdown
     def shutdown(sig, frame):
         logger.info("Shutting down...")
+        sched.stop()
         platform.stop_polling()
         sys.exit(0)
 

@@ -4,9 +4,11 @@ import logging
 import re
 from datetime import datetime
 
-from models.todo import TodoModel
+from models.todo import Todo, TodoModel
+from models.user_prefs import UserPrefs
 from views.todo_view import TodoView
 from platforms.base import BotPlatform, Update
+from i18n import t
 
 logger = logging.getLogger(__name__)
 
@@ -27,12 +29,27 @@ class TodoController:
             "/undone": self._cmd_undone,
             "/del": self._cmd_delete,
             "/delete": self._cmd_delete,
+            "/edit": self._cmd_edit,
+            "/note": self._cmd_note,
             "/priority": self._cmd_priority,
             "/due": self._cmd_due,
+            "/setdue": self._cmd_setdue,
+            "/repeat": self._cmd_repeat,
+            "/search": self._cmd_search,
+            "/assign": self._cmd_assign,
             "/clear": self._cmd_clear,
             "/stats": self._cmd_stats,
             "/detail": self._cmd_detail,
+            "/export": self._cmd_export,
+            "/lang": self._cmd_lang,
         }
+
+    def _get_lang(self, update: Update) -> str:
+        prefs = UserPrefs.get(update.user.id)
+        lang = prefs.get("language", "auto")
+        if lang == "auto":
+            lang = UserPrefs.detect_language(update.message.text)
+        return lang
 
     def handle_update(self, update: Update):
         """Route incoming update to the appropriate command handler."""
@@ -40,24 +57,34 @@ class TodoController:
         if not text:
             return
 
-        # Send typing indicator
         self.platform.send_typing(update.chat.id, update.chat.type)
+
+        lang = self._get_lang(update)
+
+        # Check first-use onboarding
+        if UserPrefs.is_first_use(update.user.id):
+            UserPrefs.mark_welcomed(update.user.id)
+            if text == "/start" or not text.startswith("/"):
+                reply_text, msg_type = self.view.onboarding(lang)
+                self.platform.send_message(
+                    chat_id=update.chat.id, text=reply_text,
+                    chat_type=update.chat.type, msg_type=msg_type,
+                )
+                return
 
         # Parse command
         parts = text.split(maxsplit=1)
         cmd = parts[0].lower()
         args = parts[1] if len(parts) > 1 else ""
 
-        # Handle @bot suffix in group chats (e.g. /list@todo_bot)
         if "@" in cmd:
             cmd = cmd.split("@")[0]
 
         handler = self._commands.get(cmd)
         if handler:
-            reply_text, msg_type = handler(update, args)
+            reply_text, msg_type = handler(update, args, lang)
         else:
-            # Not a recognized command - show help hint
-            reply_text, msg_type = "Unknown command. Type /help to see available commands.", 1
+            reply_text, msg_type = t("err_unknown_cmd", lang), 1
 
         self.platform.send_message(
             chat_id=update.chat.id,
@@ -67,40 +94,46 @@ class TodoController:
             reply_to=update.message.id,
         )
 
-    def _cmd_start(self, update: Update, args: str) -> tuple[str, int]:
-        return self.view.welcome()
+    # --- Commands ---
 
-    def _cmd_help(self, update: Update, args: str) -> tuple[str, int]:
-        return self.view.help_message()
+    def _cmd_start(self, update: Update, args: str, lang: str) -> tuple[str, int]:
+        return self.view.welcome(lang)
 
-    def _cmd_add(self, update: Update, args: str) -> tuple[str, int]:
+    def _cmd_help(self, update: Update, args: str, lang: str) -> tuple[str, int]:
+        return self.view.help_message(lang)
+
+    def _cmd_add(self, update: Update, args: str, lang: str) -> tuple[str, int]:
         if not args:
-            return self.view.error("Usage: /add <task title>")
+            return self.view.error(t("err_add_usage", lang))
 
-        # Parse optional flags: /add Buy milk #high @2026-04-10
         title = args
         priority = 2
         due_date = None
+        tags = []
 
-        # Extract priority tag
-        priority_match = re.search(r'#(high|medium|low)', title, re.IGNORECASE)
-        if priority_match:
-            p = priority_match.group(1).lower()
-            priority = {"high": 1, "medium": 2, "low": 3}[p]
-            title = title.replace(priority_match.group(0), "").strip()
+        # Extract #tags
+        tag_matches = re.findall(r'#(\S+)', title)
+        priority_words = {"high", "medium", "low"}
+        for tag in tag_matches:
+            low = tag.lower()
+            if low in priority_words:
+                priority = {"high": 1, "medium": 2, "low": 3}[low]
+            else:
+                tags.append(tag)
+            title = title.replace(f"#{tag}", "").strip()
 
-        # Extract due date
+        # Extract @YYYY-MM-DD due date
         due_match = re.search(r'@(\d{4}-\d{2}-\d{2})', title)
         if due_match:
             due_date = due_match.group(1)
             try:
                 datetime.strptime(due_date, "%Y-%m-%d")
             except ValueError:
-                return self.view.error("Invalid date format. Use YYYY-MM-DD.")
+                return self.view.error(t("err_date_invalid", lang))
             title = title.replace(due_match.group(0), "").strip()
 
         if not title:
-            return self.view.error("Task title cannot be empty.")
+            return self.view.error(t("err_empty_title", lang))
 
         todo = self.model.create(
             user_id=update.user.id,
@@ -109,90 +142,233 @@ class TodoController:
             title=title,
             priority=priority,
             due_date=due_date,
+            tags=",".join(tags) if tags else "",
         )
-        return self.view.todo_created(todo)
+        return self.view.todo_created(todo, lang)
 
-    def _cmd_list(self, update: Update, args: str) -> tuple[str, int]:
+    def _cmd_list(self, update: Update, args: str, lang: str) -> tuple[str, int]:
+        args = args.strip().lower()
+        if args == "overdue":
+            todos = self.model.get_overdue(update.user.id)
+            return self.view.todo_list(todos, t("overdue_todos", lang), lang)
+        if args.startswith("#"):
+            tag = args[1:]
+            todos = self.model.list_by_user(update.user.id, status=0, tag=tag)
+            return self.view.todo_list(todos, f"#{tag}", lang)
+        if args in ("high", "1"):
+            todos = self.model.list_by_user(update.user.id, status=0, priority=1)
+            return self.view.todo_list(todos, "High Priority", lang)
+        if args in ("medium", "2"):
+            todos = self.model.list_by_user(update.user.id, status=0, priority=2)
+            return self.view.todo_list(todos, "Medium Priority", lang)
+        if args in ("low", "3"):
+            todos = self.model.list_by_user(update.user.id, status=0, priority=3)
+            return self.view.todo_list(todos, "Low Priority", lang)
+
         todos = self.model.list_by_user(update.user.id, status=0)
-        return self.view.todo_list(todos, title="Pending Todos")
+        return self.view.todo_list(todos, t("pending_todos", lang), lang)
 
-    def _cmd_all(self, update: Update, args: str) -> tuple[str, int]:
+    def _cmd_all(self, update: Update, args: str, lang: str) -> tuple[str, int]:
         todos = self.model.list_by_user(update.user.id)
-        return self.view.todo_list(todos, title="All Todos")
+        return self.view.todo_list(todos, t("all_todos", lang), lang)
 
-    def _cmd_done(self, update: Update, args: str) -> tuple[str, int]:
+    def _cmd_done(self, update: Update, args: str, lang: str) -> tuple[str, int]:
         todo_id = self._parse_id(args)
         if not todo_id:
-            return self.view.error("Usage: /done <id>")
-        if self.model.complete(todo_id, update.user.id):
-            return self.view.todo_completed(todo_id)
-        return self.view.not_found(todo_id)
+            return self.view.error(t("err_done_usage", lang))
+        completed_todo = self.model.complete(todo_id, update.user.id)
+        if completed_todo:
+            # Handle recurring: recreate if repeat_rule is set
+            if completed_todo.repeat_rule:
+                self._recreate_recurring(completed_todo)
+            return self.view.todo_completed(todo_id, lang)
+        return self.view.not_found(todo_id, lang)
 
-    def _cmd_undone(self, update: Update, args: str) -> tuple[str, int]:
+    def _cmd_undone(self, update: Update, args: str, lang: str) -> tuple[str, int]:
         todo_id = self._parse_id(args)
         if not todo_id:
-            return self.view.error("Usage: /undone <id>")
+            return self.view.error(t("err_undone_usage", lang))
         if self.model.uncomplete(todo_id, update.user.id):
-            return self.view.todo_uncompleted(todo_id)
-        return self.view.not_found(todo_id)
+            return self.view.todo_uncompleted(todo_id, lang)
+        return self.view.not_found(todo_id, lang)
 
-    def _cmd_delete(self, update: Update, args: str) -> tuple[str, int]:
+    def _cmd_delete(self, update: Update, args: str, lang: str) -> tuple[str, int]:
         todo_id = self._parse_id(args)
         if not todo_id:
-            return self.view.error("Usage: /del <id>")
+            return self.view.error(t("err_del_usage", lang))
         if self.model.delete(todo_id, update.user.id):
-            return self.view.todo_deleted(todo_id)
-        return self.view.not_found(todo_id)
+            return self.view.todo_deleted(todo_id, lang)
+        return self.view.not_found(todo_id, lang)
 
-    def _cmd_priority(self, update: Update, args: str) -> tuple[str, int]:
+    def _cmd_edit(self, update: Update, args: str, lang: str) -> tuple[str, int]:
+        parts = args.split(maxsplit=1)
+        if len(parts) != 2:
+            return self.view.error(t("err_edit_usage", lang))
+        todo_id = self._parse_id(parts[0])
+        new_title = parts[1].strip()
+        if not todo_id:
+            return self.view.error(t("err_id_invalid", lang))
+        if not new_title:
+            return self.view.error(t("err_empty_title", lang))
+        if self.model.update_title(todo_id, update.user.id, new_title):
+            return self.view.title_edited(todo_id, lang)
+        return self.view.not_found(todo_id, lang)
+
+    def _cmd_note(self, update: Update, args: str, lang: str) -> tuple[str, int]:
+        parts = args.split(maxsplit=1)
+        if len(parts) != 2:
+            return self.view.error(t("err_note_usage", lang))
+        todo_id = self._parse_id(parts[0])
+        text = parts[1].strip()
+        if not todo_id:
+            return self.view.error(t("err_id_invalid", lang))
+        if self.model.update_description(todo_id, update.user.id, text):
+            return self.view.note_added(todo_id, lang)
+        return self.view.not_found(todo_id, lang)
+
+    def _cmd_priority(self, update: Update, args: str, lang: str) -> tuple[str, int]:
         parts = args.split()
         if len(parts) != 2:
-            return self.view.error("Usage: /priority <id> <1|2|3>\n1=High, 2=Medium, 3=Low")
+            return self.view.error(t("err_priority_usage", lang))
         todo_id = self._parse_id(parts[0])
         try:
             priority = int(parts[1])
         except ValueError:
-            return self.view.error("Priority must be 1 (High), 2 (Medium), or 3 (Low).")
+            return self.view.error(t("err_priority_invalid", lang))
         if priority not in (1, 2, 3):
-            return self.view.error("Priority must be 1 (High), 2 (Medium), or 3 (Low).")
+            return self.view.error(t("err_priority_invalid", lang))
         if not todo_id:
-            return self.view.error("Invalid todo ID.")
+            return self.view.error(t("err_id_invalid", lang))
         if self.model.update_priority(todo_id, update.user.id, priority):
-            return self.view.priority_updated(todo_id, priority)
-        return self.view.not_found(todo_id)
+            return self.view.priority_updated(todo_id, priority, lang)
+        return self.view.not_found(todo_id, lang)
 
-    def _cmd_due(self, update: Update, args: str) -> tuple[str, int]:
+    def _cmd_due(self, update: Update, args: str, lang: str) -> tuple[str, int]:
         parts = args.split()
         if len(parts) != 2:
-            return self.view.error("Usage: /due <id> <YYYY-MM-DD>")
+            return self.view.error(t("err_due_usage", lang))
         todo_id = self._parse_id(parts[0])
         due_date = parts[1]
         try:
             datetime.strptime(due_date, "%Y-%m-%d")
         except ValueError:
-            return self.view.error("Invalid date format. Use YYYY-MM-DD.")
+            return self.view.error(t("err_date_invalid", lang))
         if not todo_id:
-            return self.view.error("Invalid todo ID.")
+            return self.view.error(t("err_id_invalid", lang))
         if self.model.update_due_date(todo_id, update.user.id, due_date):
-            return self.view.due_date_updated(todo_id, due_date)
-        return self.view.not_found(todo_id)
+            return self.view.due_date_updated(todo_id, due_date, lang)
+        return self.view.not_found(todo_id, lang)
 
-    def _cmd_clear(self, update: Update, args: str) -> tuple[str, int]:
-        count = self.model.clear_completed(update.user.id)
-        return self.view.cleared(count)
-
-    def _cmd_stats(self, update: Update, args: str) -> tuple[str, int]:
-        counts = self.model.count_by_user(update.user.id)
-        return self.view.stats(counts)
-
-    def _cmd_detail(self, update: Update, args: str) -> tuple[str, int]:
+    def _cmd_setdue(self, update: Update, args: str, lang: str) -> tuple[str, int]:
         todo_id = self._parse_id(args)
         if not todo_id:
-            return self.view.error("Usage: /detail <id>")
+            return self.view.error(t("err_setdue_usage", lang))
         todo = self.model.get_by_id(todo_id, update.user.id)
         if not todo:
-            return self.view.not_found(todo_id)
-        return self.view.todo_detail(todo)
+            return self.view.not_found(todo_id, lang)
+        return self.view.set_due_prompt(todo, lang)
+
+    def _cmd_repeat(self, update: Update, args: str, lang: str) -> tuple[str, int]:
+        parts = args.split()
+        if len(parts) != 2:
+            return self.view.error(t("err_repeat_usage", lang))
+        todo_id = self._parse_id(parts[0])
+        rule = parts[1].lower()
+        if not todo_id:
+            return self.view.error(t("err_id_invalid", lang))
+        if rule == "off":
+            rule = ""
+        elif rule not in ("daily", "weekly", "monthly"):
+            return self.view.error(t("err_repeat_invalid", lang))
+        if self.model.update_repeat_rule(todo_id, update.user.id, rule):
+            return self.view.repeat_set(todo_id, rule, lang)
+        return self.view.not_found(todo_id, lang)
+
+    def _cmd_search(self, update: Update, args: str, lang: str) -> tuple[str, int]:
+        keyword = args.strip()
+        if not keyword:
+            return self.view.error(t("err_search_usage", lang))
+        todos = self.model.search(update.user.id, keyword)
+        return self.view.search_results(todos, keyword, lang)
+
+    def _cmd_assign(self, update: Update, args: str, lang: str) -> tuple[str, int]:
+        if update.chat.type == "private":
+            return self.view.error(t("err_assign_private", lang))
+        parts = args.split()
+        if len(parts) < 2:
+            return self.view.error(t("err_assign_usage", lang))
+        todo_id = self._parse_id(parts[0])
+        if not todo_id:
+            return self.view.error(t("err_id_invalid", lang))
+        assignee_id = self._parse_id(parts[1])
+        if not assignee_id:
+            return self.view.error(t("err_assign_usage", lang))
+        assignee_name = parts[2] if len(parts) > 2 else str(assignee_id)
+        if self.model.assign(todo_id, update.user.id, assignee_id, assignee_name):
+            return self.view.assigned(todo_id, assignee_name, lang)
+        return self.view.not_found(todo_id, lang)
+
+    def _cmd_clear(self, update: Update, args: str, lang: str) -> tuple[str, int]:
+        count = self.model.clear_completed(update.user.id)
+        return self.view.cleared(count, lang)
+
+    def _cmd_stats(self, update: Update, args: str, lang: str) -> tuple[str, int]:
+        counts = self.model.count_by_user(update.user.id)
+        return self.view.stats(counts, lang)
+
+    def _cmd_detail(self, update: Update, args: str, lang: str) -> tuple[str, int]:
+        todo_id = self._parse_id(args)
+        if not todo_id:
+            return self.view.error(t("err_id_invalid", lang))
+        todo = self.model.get_by_id(todo_id, update.user.id)
+        if not todo:
+            return self.view.not_found(todo_id, lang)
+        return self.view.todo_detail(todo, lang)
+
+    def _cmd_export(self, update: Update, args: str, lang: str) -> tuple[str, int]:
+        todos = self.model.list_by_user(update.user.id)
+        return self.view.export_text(todos, lang)
+
+    def _cmd_lang(self, update: Update, args: str, lang: str) -> tuple[str, int]:
+        new_lang = args.strip().lower()
+        if new_lang not in ("en", "zh"):
+            return self.view.error(t("err_lang_usage", lang))
+        UserPrefs.set_language(update.user.id, new_lang)
+        return self.view.lang_set(new_lang)
+
+    # --- Helpers ---
+
+    def _recreate_recurring(self, todo: Todo):
+        """When a recurring task is completed, create the next occurrence."""
+        from datetime import timedelta
+        next_due = None
+        if todo.due_date:
+            try:
+                due = datetime.strptime(str(todo.due_date), "%Y-%m-%d")
+                if todo.repeat_rule == "daily":
+                    next_due = (due + timedelta(days=1)).strftime("%Y-%m-%d")
+                elif todo.repeat_rule == "weekly":
+                    next_due = (due + timedelta(weeks=1)).strftime("%Y-%m-%d")
+                elif todo.repeat_rule == "monthly":
+                    month = due.month % 12 + 1
+                    year = due.year + (1 if due.month == 12 else 0)
+                    next_due = due.replace(year=year, month=month).strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+
+        self.model.create(
+            user_id=todo.user_id,
+            chat_id=todo.chat_id,
+            chat_type=todo.chat_type,
+            title=todo.title,
+            priority=todo.priority,
+            due_date=next_due,
+            description=todo.description,
+            tags=todo.tags,
+            repeat_rule=todo.repeat_rule,
+            assignee_id=todo.assignee_id,
+            assignee_name=todo.assignee_name,
+        )
 
     @staticmethod
     def _parse_id(text: str) -> int | None:
