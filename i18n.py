@@ -82,6 +82,37 @@ STRINGS = {
         "reminder": "Reminder: Todo #{id} is due today!\n{title}",
         "daily_summary_title": "Daily Summary",
         "daily_summary_text": "You have {pending} pending task(s), {overdue} overdue.",
+        # Subtasks
+        "subtask_added": "Subtask #{id} added to Todo #{parent_id}.",
+        "subtasks": "Subtasks",
+        "subtask_progress": "{done}/{total}",
+        # Projects
+        "project_created": "Project \"{name}\" created.",
+        "project_deleted": "Project \"{name}\" deleted.",
+        "project_list_title": "Your Projects",
+        "no_projects": "No projects yet. Use /project create <name> to create one.",
+        "project_assigned": "Todo #{id} moved to project \"{name}\".",
+        # Star
+        "starred": "Starred",
+        "unstarred": "Unstarred",
+        "star_toggled": "Todo #{id} {status}.",
+        "starred_todos": "Starred Todos",
+        # Today
+        "today_title": "Today",
+        # Batch
+        "doneall": "Marked {count} todo(s) as completed.",
+        "delall": "Deleted {count} completed todo(s).",
+        # Snooze
+        "snoozed": "Todo #{id} snoozed for {duration}.",
+        # Activity
+        "activity_title": "Recent Activity",
+        "no_activity": "No recent activity.",
+        "act_created": "{user} created #{id}: {detail}",
+        "act_completed": "{user} completed #{id}: {detail}",
+        "act_assigned": "{user} assigned #{id} to {detail}",
+        "act_deleted": "{user} deleted #{id}",
+        # Time
+        "due_time_set": "Todo #{id} reminder time set to {time}.",
         # Error messages
         "err_add_usage": "Usage: /add <task title>",
         "err_empty_title": "Task title cannot be empty.",
@@ -104,6 +135,13 @@ STRINGS = {
         "err_assign_private": "Assign only works in group chats.",
         "err_unknown_cmd": "Unknown command. Type /help to see available commands.",
         "err_lang_usage": "Usage: /lang <en|zh>",
+        "err_subtask_usage": "Usage: /subtask <parent_id> <title>",
+        "err_project_usage": "Usage: /project create <name> | /project delete <name> | /project list",
+        "err_project_not_found": "Project not found.",
+        "err_move_usage": "Usage: /move <todo_id> <project_name>",
+        "err_star_usage": "Usage: /star <id>",
+        "err_snooze_usage": "Usage: /snooze <id> <1h|2h|4h|1d>",
+        "err_snooze_invalid": "Duration must be: 1h, 2h, 4h, or 1d.",
     },
     "zh": {
         "welcome": (
@@ -186,6 +224,37 @@ STRINGS = {
         "reminder": "提醒：待办 #{id} 今天截止！\n{title}",
         "daily_summary_title": "每日摘要",
         "daily_summary_text": "你有 {pending} 个待办任务，{overdue} 个已逾期。",
+        # Subtasks
+        "subtask_added": "子任务 #{id} 已添加到待办 #{parent_id}。",
+        "subtasks": "子任务",
+        "subtask_progress": "{done}/{total}",
+        # Projects
+        "project_created": "项目 \"{name}\" 已创建。",
+        "project_deleted": "项目 \"{name}\" 已删除。",
+        "project_list_title": "你的项目",
+        "no_projects": "暂无项目。使用 /project create <名称> 创建。",
+        "project_assigned": "待办 #{id} 已移至项目 \"{name}\"。",
+        # Star
+        "starred": "已收藏",
+        "unstarred": "已取消收藏",
+        "star_toggled": "待办 #{id} {status}。",
+        "starred_todos": "收藏的任务",
+        # Today
+        "today_title": "今日任务",
+        # Batch
+        "doneall": "已将 {count} 个任务标记为完成。",
+        "delall": "已删除 {count} 个已完成任务。",
+        # Snooze
+        "snoozed": "待办 #{id} 已暂缓 {duration}。",
+        # Activity
+        "activity_title": "近期动态",
+        "no_activity": "暂无动态。",
+        "act_created": "{user} 创建了 #{id}：{detail}",
+        "act_completed": "{user} 完成了 #{id}：{detail}",
+        "act_assigned": "{user} 指派了 #{id} 给 {detail}",
+        "act_deleted": "{user} 删除了 #{id}",
+        # Time
+        "due_time_set": "待办 #{id} 提醒时间已设为 {time}。",
         # Error messages
         "err_add_usage": "用法：/add <任务标题>",
         "err_empty_title": "任务标题不能为空。",
@@ -208,6 +277,13 @@ STRINGS = {
         "err_assign_private": "指派任务仅限群聊使用。",
         "err_unknown_cmd": "未知命令。输入 /help 查看可用命令。",
         "err_lang_usage": "用法：/lang <en|zh>",
+        "err_subtask_usage": "用法：/subtask <父任务编号> <标题>",
+        "err_project_usage": "用法：/project create <名称> | /project delete <名称> | /project list",
+        "err_project_not_found": "项目不存在。",
+        "err_move_usage": "用法：/move <任务编号> <项目名称>",
+        "err_star_usage": "用法：/star <编号>",
+        "err_snooze_usage": "用法：/snooze <编号> <1h|2h|4h|1d>",
+        "err_snooze_invalid": "时长必须是：1h、2h、4h 或 1d。",
     },
 }
 

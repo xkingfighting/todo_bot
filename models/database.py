@@ -83,6 +83,11 @@ def init_database():
             `assignee_id` INT NOT NULL DEFAULT 0 COMMENT 'Assigned user id (group)',
             `assignee_name` VARCHAR(100) NOT NULL DEFAULT '',
             `reminder_sent` TINYINT NOT NULL DEFAULT 0 COMMENT '0=not sent, 1=sent',
+            `parent_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Parent todo id for subtasks',
+            `project_id` INT UNSIGNED NOT NULL DEFAULT 0,
+            `starred` TINYINT NOT NULL DEFAULT 0,
+            `due_time` VARCHAR(5) NOT NULL DEFAULT '' COMMENT 'HH:MM format',
+            `snooze_until` INT NOT NULL DEFAULT 0 COMMENT 'Unix timestamp',
             `status` TINYINT NOT NULL DEFAULT 0 COMMENT '0=pending, 1=completed',
             `completed_at` INT DEFAULT NULL,
             `created_at` INT NOT NULL DEFAULT 0,
@@ -93,6 +98,9 @@ def init_database():
             KEY `idx_due_date` (`due_date`),
             KEY `idx_user_chat` (`user_id`, `chat_id`, `chat_type`),
             KEY `idx_assignee` (`assignee_id`),
+            KEY `idx_parent` (`parent_id`),
+            KEY `idx_project` (`project_id`),
+            KEY `idx_starred` (`user_id`, `starred`),
             KEY `idx_tags` (`tags`(100)),
             FULLTEXT KEY `ft_title` (`title`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -136,6 +144,53 @@ def init_database():
         cursor.execute("ALTER TABLE `todos` ADD FULLTEXT KEY `ft_title` (`title`)")
     except mysql.connector.Error:
         pass
+
+    # New columns for v3
+    for col_sql in [
+        "ALTER TABLE `todos` ADD COLUMN `parent_id` INT UNSIGNED NOT NULL DEFAULT 0",
+        "ALTER TABLE `todos` ADD COLUMN `project_id` INT UNSIGNED NOT NULL DEFAULT 0",
+        "ALTER TABLE `todos` ADD COLUMN `starred` TINYINT NOT NULL DEFAULT 0",
+        "ALTER TABLE `todos` ADD COLUMN `due_time` VARCHAR(5) NOT NULL DEFAULT ''",
+        "ALTER TABLE `todos` ADD COLUMN `snooze_until` INT NOT NULL DEFAULT 0",
+        "ALTER TABLE `todos` ADD KEY `idx_parent` (`parent_id`)",
+        "ALTER TABLE `todos` ADD KEY `idx_project` (`project_id`)",
+    ]:
+        try:
+            cursor.execute(col_sql)
+        except mysql.connector.Error:
+            pass
+
+    # Projects table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS `projects` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `user_id` INT NOT NULL,
+            `chat_id` INT NOT NULL DEFAULT 0,
+            `chat_type` VARCHAR(10) NOT NULL DEFAULT 'private',
+            `name` VARCHAR(200) NOT NULL,
+            `emoji` VARCHAR(10) NOT NULL DEFAULT '',
+            `created_at` INT NOT NULL DEFAULT 0,
+            PRIMARY KEY (`id`),
+            KEY `idx_user` (`user_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """)
+
+    # Activity log for group collaboration
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS `activity_log` (
+            `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `chat_id` INT NOT NULL,
+            `chat_type` VARCHAR(10) NOT NULL DEFAULT 'group',
+            `user_id` INT NOT NULL,
+            `user_name` VARCHAR(100) NOT NULL DEFAULT '',
+            `action` VARCHAR(30) NOT NULL COMMENT 'created/completed/assigned/deleted',
+            `todo_id` INT UNSIGNED NOT NULL DEFAULT 0,
+            `detail` VARCHAR(500) NOT NULL DEFAULT '',
+            `created_at` INT NOT NULL DEFAULT 0,
+            PRIMARY KEY (`id`),
+            KEY `idx_chat` (`chat_id`, `created_at`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """)
 
     cursor.close()
     conn.close()

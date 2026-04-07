@@ -3,7 +3,7 @@
 import json
 from datetime import datetime, timedelta
 from functools import partial
-from models.todo import Todo, PRIORITY_ICONS
+from models.todo import Todo, TodoModel, PRIORITY_ICONS
 from i18n import t, priority_label, repeat_label
 
 _dumps = partial(json.dumps, ensure_ascii=False, separators=(",", ":"))
@@ -37,6 +37,10 @@ class TodoView:
         text = t("todo_created", lang, id=todo.id, title=todo.title)
         if todo.tags:
             text += f"\n#{todo.tags.replace(',', ' #')}"
+        if todo.due_date:
+            text += f"\n{t('due_date', lang)}: {todo.due_date}"
+            if todo.due_time:
+                text += f" {todo.due_time}"
         card = {
             "text": text,
             "buttons": [
@@ -56,20 +60,30 @@ class TodoView:
         today = datetime.now().strftime("%Y-%m-%d")
         items = []
         for todo in todos:
+            star = "*" if todo.starred else ""
             status_icon = STATUS_ICONS.get(todo.status, "[ ]")
             p_icon = PRIORITY_ICONS.get(todo.priority, "!")
-            p_label = priority_label(todo.priority, lang)
-            desc = f"{p_icon} {p_label}"
+            p_lbl = priority_label(todo.priority, lang)
+            desc = f"{p_icon} {p_lbl}"
+
             if todo.due_date:
                 desc += f" | {todo.due_date}"
+                if todo.due_time:
+                    desc += f" {todo.due_time}"
                 if todo.status == 0 and str(todo.due_date) < today:
                     desc += f" {t('overdue', lang)}"
             if todo.tags:
                 desc += f" | #{todo.tags.replace(',', ' #')}"
             if todo.assignee_name:
                 desc += f" | @{todo.assignee_name}"
+
+            # Subtask progress
+            sub_counts = TodoModel.count_subtasks(todo.id)
+            if sub_counts["total"] > 0:
+                desc += f" | {t('subtasks', lang)} {t('subtask_progress', lang, done=sub_counts['done'], total=sub_counts['total'])}"
+
             items.append({
-                "title": f"{status_icon} #{todo.id} {todo.title}",
+                "title": f"{star}{status_icon} #{todo.id} {todo.title}",
                 "description": desc,
                 "command": f"/detail {todo.id}",
             })
@@ -83,13 +97,18 @@ class TodoView:
         status_val = t("completed", lang) if todo.status == 1 else t("pending", lang)
         if todo.status == 0 and todo.due_date and str(todo.due_date) < today:
             status_val = t("overdue", lang)
+        if todo.starred:
+            status_val += " *"
 
         fields = [
             {"label": t("status", lang), "value": status_val},
             {"label": t("priority", lang), "value": priority_label(todo.priority, lang)},
         ]
         if todo.due_date:
-            fields.append({"label": t("due_date", lang), "value": str(todo.due_date)})
+            due_val = str(todo.due_date)
+            if todo.due_time:
+                due_val += f" {todo.due_time}"
+            fields.append({"label": t("due_date", lang), "value": due_val})
         if todo.tags:
             fields.append({"label": t("tags", lang), "value": f"#{todo.tags.replace(',', ' #')}"})
         if todo.repeat_rule:
@@ -99,16 +118,35 @@ class TodoView:
         if todo.description:
             fields.append({"label": t("description", lang), "value": todo.description})
 
+        # Subtask progress
+        sub_counts = TodoModel.count_subtasks(todo.id)
+        if sub_counts["total"] > 0:
+            fields.append({"label": t("subtasks", lang),
+                           "value": t("subtask_progress", lang, done=sub_counts["done"], total=sub_counts["total"])})
+
+        # Project name
+        if todo.project_id:
+            from models.project import ProjectModel
+            proj = ProjectModel.get_by_id(todo.project_id, todo.user_id)
+            if proj:
+                fields.append({"label": "Project", "value": f"{proj.emoji} {proj.name}".strip()})
+
         buttons = []
         if todo.status == 0:
             buttons.append({"label": t("done", lang), "command": f"/done {todo.id}", "style": "primary"})
         else:
             buttons.append({"label": t("reopen", lang), "command": f"/undone {todo.id}"})
+
+        # Star toggle
+        star_label = t("unstarred", lang) if todo.starred else t("starred", lang)
+        buttons.append({"label": f"* {star_label}", "command": f"/star {todo.id}"})
+
         for p in (1, 2, 3):
             if p != todo.priority:
                 buttons.append({"label": f"{t('priority', lang)}: {priority_label(p, lang)}",
                                 "command": f"/priority {todo.id} {p}"})
         buttons.append({"label": t("set_due", lang), "command": f"/setdue {todo.id}"})
+        buttons.append({"label": f"+ {t('subtasks', lang)}", "command": f"/subtask {todo.id} "})
         buttons.append({"label": t("delete", lang), "command": f"/del {todo.id}"})
 
         card = {
@@ -198,12 +236,14 @@ class TodoView:
             {"label": t("pending", lang), "value": str(counts["pending"])},
             {"label": t("completed", lang), "value": str(counts["completed"])},
             {"label": t("overdue", lang), "value": str(counts["overdue"])},
+            {"label": t("starred", lang), "value": str(counts.get("starred", 0))},
         ]
         card = {
             "title": t("stats_title", lang),
             "fields": fields,
             "buttons": [
                 {"label": t("view_pending", lang), "command": "/list"},
+                {"label": t("today_title", lang), "command": "/today"},
                 {"label": t("view_all", lang), "command": "/all"},
             ]
         }
@@ -217,9 +257,8 @@ class TodoView:
 
     @staticmethod
     def lang_select(lang: str) -> tuple[str, int]:
-        """ActionCard for language selection."""
         card = {
-            "text": "🌐 Select Language / 选择语言",
+            "text": "Select Language / 选择语言",
             "buttons": [
                 {"label": "English", "command": "/lang en", "style": "primary" if lang == "en" else ""},
                 {"label": "中文", "command": "/lang zh", "style": "primary" if lang == "zh" else ""},
@@ -233,11 +272,80 @@ class TodoView:
         return t("lang_set", lang), 1
 
     @staticmethod
+    def subtask_added(sub_id: int, parent_id: int, lang: str) -> tuple[str, int]:
+        return t("subtask_added", lang, id=sub_id, parent_id=parent_id), 1
+
+    @staticmethod
+    def project_created(name: str, lang: str) -> tuple[str, int]:
+        return t("project_created", lang, name=name), 1
+
+    @staticmethod
+    def project_deleted(name: str, lang: str) -> tuple[str, int]:
+        return t("project_deleted", lang, name=name), 1
+
+    @staticmethod
+    def project_list(projects: list, lang: str) -> tuple[str, int]:
+        if not projects:
+            return t("no_projects", lang), 1
+        items = []
+        for p in projects:
+            label = f"{p.emoji} {p.name}".strip() if p.emoji else p.name
+            items.append({
+                "title": label,
+                "description": f"ID: {p.id}",
+                "command": f"/list project:{p.id}",
+            })
+        card = {"text": t("project_list_title", lang), "items": items}
+        return _dumps(card), 11
+
+    @staticmethod
+    def project_assigned(todo_id: int, name: str, lang: str) -> tuple[str, int]:
+        return t("project_assigned", lang, id=todo_id, name=name), 1
+
+    @staticmethod
+    def star_toggled(todo_id: int, starred: bool, lang: str) -> tuple[str, int]:
+        status = t("starred", lang) if starred else t("unstarred", lang)
+        return t("star_toggled", lang, id=todo_id, status=status), 1
+
+    @staticmethod
+    def batch_done(count: int, lang: str) -> tuple[str, int]:
+        return t("doneall", lang, count=count), 1
+
+    @staticmethod
+    def batch_del(count: int, lang: str) -> tuple[str, int]:
+        return t("delall", lang, count=count), 1
+
+    @staticmethod
+    def snoozed(todo_id: int, duration: str, lang: str) -> tuple[str, int]:
+        return t("snoozed", lang, id=todo_id, duration=duration), 1
+
+    @staticmethod
+    def due_time_set(todo_id: int, time_str: str, lang: str) -> tuple[str, int]:
+        return t("due_time_set", lang, id=todo_id, time=time_str), 1
+
+    @staticmethod
+    def activity_log(entries: list[dict], lang: str) -> tuple[str, int]:
+        if not entries:
+            return t("no_activity", lang), 1
+        lines = [t("activity_title", lang), ""]
+        for e in entries[:20]:
+            action = e.get("action", "")
+            key = f"act_{action}"
+            line = t(key, lang, user=e.get("user_name", "?"),
+                     id=e.get("todo_id", 0), detail=e.get("detail", ""))
+            lines.append(line)
+        return "\n".join(lines), 1
+
+    @staticmethod
     def reminder(todo: Todo, lang: str) -> tuple[str, int]:
+        text = t("reminder", lang, id=todo.id, title=todo.title)
+        if todo.due_time:
+            text += f"\n{todo.due_time}"
         card = {
-            "text": t("reminder", lang, id=todo.id, title=todo.title),
+            "text": text,
             "buttons": [
                 {"label": t("done", lang), "command": f"/done {todo.id}", "style": "primary"},
+                {"label": "Snooze 1h", "command": f"/snooze {todo.id} 1h"},
                 {"label": t("view_list", lang), "command": "/list"},
             ]
         }
@@ -249,6 +357,7 @@ class TodoView:
             "text": t("daily_summary_text", lang, pending=counts["pending"], overdue=counts["overdue"]),
             "buttons": [
                 {"label": t("view_pending", lang), "command": "/list", "style": "primary"},
+                {"label": t("today_title", lang), "command": "/today"},
             ]
         }
         if counts["overdue"] > 0:
