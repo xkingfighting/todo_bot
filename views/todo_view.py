@@ -58,6 +58,24 @@ class TodoView:
             return t("no_todos", lang), 1
 
         today = datetime.now().strftime("%Y-%m-%d")
+
+        # Batch load project names for todos that belong to a project
+        project_ids = {todo.project_id for todo in todos if todo.project_id}
+        project_names = {}
+        if project_ids:
+            from models.project import ProjectModel
+            from models.database import get_db
+            conn = get_db()
+            cursor = conn.cursor(dictionary=True)
+            placeholders = ",".join(["%s"] * len(project_ids))
+            cursor.execute(f"SELECT id, name, emoji FROM projects WHERE id IN ({placeholders})",
+                           list(project_ids))
+            for row in cursor.fetchall():
+                name = f"{row['emoji']} {row['name']}".strip() if row.get("emoji") else row["name"]
+                project_names[row["id"]] = name
+            cursor.close()
+            conn.close()
+
         items = []
         for todo in todos:
             star = "*" if todo.starred else ""
@@ -65,6 +83,10 @@ class TodoView:
             p_icon = PRIORITY_ICONS.get(todo.priority, "!")
             p_lbl = priority_label(todo.priority, lang)
             desc = f"{p_icon} {p_lbl}"
+
+            # Project name (between priority and date)
+            if todo.project_id and todo.project_id in project_names:
+                desc += f" | {project_names[todo.project_id]}"
 
             if todo.due_date:
                 desc += f" | {todo.due_date}"
