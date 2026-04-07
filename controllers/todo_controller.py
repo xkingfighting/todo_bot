@@ -327,16 +327,100 @@ class TodoController:
 
     def _cmd_export(self, update: Update, args: str, lang: str) -> tuple[str, int]:
         todos = self.model.list_by_user(update.user.id)
-        return self.view.export_text(todos, lang)
+        if not todos:
+            return self.view.error(t("no_todos", lang))
+        filepath = self._generate_excel(todos, update.user.id, lang)
+        return t("export_done", lang, path=filepath), 1
 
     def _cmd_lang(self, update: Update, args: str, lang: str) -> tuple[str, int]:
         new_lang = args.strip().lower()
+        if not new_lang:
+            return self.view.lang_select(lang)
+        if new_lang == "auto":
+            UserPrefs.set_language(update.user.id, "auto")
+            return self.view.lang_set(lang)
         if new_lang not in ("en", "zh"):
-            return self.view.error(t("err_lang_usage", lang))
+            return self.view.lang_select(lang)
         UserPrefs.set_language(update.user.id, new_lang)
         return self.view.lang_set(new_lang)
 
     # --- Helpers ---
+
+    def _generate_excel(self, todos: list[Todo], user_id: int, lang: str) -> str:
+        """Generate an Excel file and return the file path."""
+        import os
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from i18n import priority_label as p_label
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = t("export_title", lang)
+
+        # Headers
+        headers = ["ID", t("status", lang), t("priority", lang), "Title",
+                    t("due_date", lang), t("tags", lang), t("repeat", lang),
+                    t("assignee", lang), t("description", lang)]
+        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+        thin_border = Border(
+            left=Side(style="thin"), right=Side(style="thin"),
+            top=Side(style="thin"), bottom=Side(style="thin"),
+        )
+
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center")
+            cell.border = thin_border
+
+        # Data rows
+        overdue_fill = PatternFill(start_color="FFE0E0", end_color="FFE0E0", fill_type="solid")
+        done_font = Font(strikethrough=True, color="999999")
+        from datetime import datetime as dt
+        today = dt.now().strftime("%Y-%m-%d")
+
+        for row_idx, todo in enumerate(todos, 2):
+            status_str = t("completed", lang) if todo.status == 1 else t("pending", lang)
+            is_overdue = todo.status == 0 and todo.due_date and str(todo.due_date) < today
+            if is_overdue:
+                status_str = t("overdue", lang)
+
+            values = [
+                todo.id,
+                status_str,
+                p_label(todo.priority, lang),
+                todo.title,
+                str(todo.due_date) if todo.due_date else "",
+                todo.tags.replace(",", ", ") if todo.tags else "",
+                todo.repeat_rule or "",
+                todo.assignee_name or "",
+                todo.description or "",
+            ]
+            for col, val in enumerate(values, 1):
+                cell = ws.cell(row=row_idx, column=col, value=val)
+                cell.border = thin_border
+                if todo.status == 1:
+                    cell.font = done_font
+                if is_overdue:
+                    cell.fill = overdue_fill
+
+        # Auto-width
+        for col in ws.columns:
+            max_len = 0
+            for cell in col:
+                if cell.value:
+                    max_len = max(max_len, len(str(cell.value)))
+            ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 40)
+
+        # Save
+        export_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "exports")
+        os.makedirs(export_dir, exist_ok=True)
+        filename = f"todos_{user_id}_{int(__import__('time').time())}.xlsx"
+        filepath = os.path.join(export_dir, filename)
+        wb.save(filepath)
+        return os.path.abspath(filepath)
 
     def _recreate_recurring(self, todo: Todo):
         """When a recurring task is completed, create the next occurrence."""

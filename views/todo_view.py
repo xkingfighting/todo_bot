@@ -216,20 +216,17 @@ class TodoView:
         return TodoView.todo_list(todos, t("search_title", lang, keyword=keyword), lang)
 
     @staticmethod
-    def export_text(todos: list[Todo], lang: str) -> tuple[str, int]:
-        if not todos:
-            return t("no_todos", lang), 1
-        lines = [t("export_title", lang), "=" * 20, ""]
-        for todo in todos:
-            icon = STATUS_ICONS.get(todo.status, "[ ]")
-            p = priority_label(todo.priority, lang)
-            line = f"{icon} #{todo.id} {todo.title} [{p}]"
-            if todo.due_date:
-                line += f" (Due: {todo.due_date})"
-            if todo.tags:
-                line += f" #{todo.tags.replace(',', ' #')}"
-            lines.append(line)
-        return "\n".join(lines), 1
+    def lang_select(lang: str) -> tuple[str, int]:
+        """ActionCard for language selection."""
+        card = {
+            "text": "🌐 Select Language / 选择语言",
+            "buttons": [
+                {"label": "English", "command": "/lang en", "style": "primary" if lang == "en" else ""},
+                {"label": "中文", "command": "/lang zh", "style": "primary" if lang == "zh" else ""},
+                {"label": "Auto / 自动", "command": "/lang auto"},
+            ]
+        }
+        return _dumps(card), 10
 
     @staticmethod
     def lang_set(lang: str) -> tuple[str, int]:
